@@ -283,6 +283,7 @@ int main(int argc, char *argv[]) {
 					  << ntohs(clientAddr.sin_port) << '\n';
 
 			std::thread t(handleConnection, clientFd);
+			t.detach();
 		}
 
 	} catch (std::exception &e) {
