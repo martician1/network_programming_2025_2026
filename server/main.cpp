@@ -7,6 +7,7 @@
 #include <map>
 #include <set>
 #include <stdexcept>
+#include <thread>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -27,33 +28,33 @@ dijkstra(std::vector<std::vector<int32_t>> &adj, uint32_t s, uint32_t t) {
 	const size_t n = adj.size();
 
 	std::vector<uint64_t> cost(n, UINT64_MAX);
-	std::vector<int32_t> parent(n, -1);
+	std::vector<uint32_t> parent(n, UINT32_MAX);
 	std::vector<bool> visited(n, false);
 
 	cost[s] = 0;
-	int32_t v = s;
+	uint32_t v = s;
 
-	while (v != t && v != -1) {
+	while (v != UINT32_MAX && v != t) {
 		visited[v] = true;
 
-		for (int32_t u = 0; u < n; ++u) {
-			if (adj[v][u] == -1 || adj[v][u] + cost[v] >= cost[u]) {
+		for (uint32_t u = 0; u < n; ++u) {
+			if (adj[v][u] == -1 || ((uint32_t)adj[v][u]) + cost[v] >= cost[u]) {
 				continue;
 			}
-			cost[u] = adj[v][u] + cost[v];
+			cost[u] = ((uint32_t)adj[v][u]) + cost[v];
 			parent[u] = v;
 		}
 
-		v = -1;
-		for (int u = 0; u < n; ++u) {
+		v = UINT32_MAX;
+		for (uint32_t u = 0; u < n; ++u) {
 			if (!visited[u] && cost[u] != UINT64_MAX &&
-				(v == -1 || cost[v] > cost[u])) {
+				(v == UINT32_MAX || cost[v] > cost[u])) {
 				v = u;
 			}
 		}
 	}
 
-	if (v == -1) {
+	if (v == UINT32_MAX) {
 		return std::make_pair(-1, std::vector<uint32_t>{});
 	}
 
@@ -73,11 +74,13 @@ std::vector<std::vector<uint32_t>> yen(std::vector<std::vector<int32_t>> &adj,
 	std::vector<std::vector<uint32_t>> A;
 	std::set<std::pair<int64_t, std::vector<uint32_t>>> B;
 
-	auto [cost, path] = dijkstra(adj, s, t);
-	if (cost == -1) {
-		return A;
+	{
+		auto [cost, path] = dijkstra(adj, s, t);
+		if (cost == -1) {
+			return A;
+		}
+		A.emplace_back(path);
 	}
-	A.emplace_back(path);
 
 	for (size_t i = 1; i < k; ++i) {
 		std::vector<uint32_t> rootPath;
@@ -88,7 +91,8 @@ std::vector<std::vector<uint32_t>> yen(std::vector<std::vector<int32_t>> &adj,
 
 			for (auto &p : A) {
 				if (std::equal(std::begin(A[i - 1]),
-							   std::begin(A[i - 1]) + j + 1, std::begin(p)) &&
+							   std::begin(A[i - 1]) + (ssize_t)j + 1,
+							   std::begin(p)) &&
 					adj[p[j]][p[j + 1]] != -1) {
 					deletedEdges.emplace_back(
 						std::make_tuple(p[j], p[j + 1], adj[p[j]][p[j + 1]]));
@@ -102,9 +106,7 @@ std::vector<std::vector<uint32_t>> yen(std::vector<std::vector<int32_t>> &adj,
 				adj[A[i - 1][x]][A[i - 1][x + 1]] = -1;
 			}
 
-			std::cout << "Dj enter" << std::endl;
 			auto [pathCost, path] = dijkstra(adj, A[i - 1][j], t);
-			std::cout << "Dj leave" << std::endl;
 			if (pathCost != -1) {
 				path.insert(path.begin(), rootPath.begin(), rootPath.end());
 				pathCost += rootPathCost;
@@ -116,7 +118,7 @@ std::vector<std::vector<uint32_t>> yen(std::vector<std::vector<int32_t>> &adj,
 			}
 
 			rootPath.emplace_back(A[i - 1][j]);
-			rootPathCost += adj[A[i - 1][j]][A[i - 1][j + 1]];
+			rootPathCost += (uint32_t)adj[A[i - 1][j]][A[i - 1][j + 1]];
 		}
 
 		if (B.size() == 0) {
@@ -145,7 +147,7 @@ int handleConnection(int fd) {
 			if (bytesReceived <= 0) {
 				throw std::runtime_error("Failed to receive input from client");
 			}
-			receivedSoFar += bytesReceived;
+			receivedSoFar += (size_t)bytesReceived;
 		} while (receivedSoFar < initialReceiveLen);
 
 		n = ntohl(((uint32_t *)initialInput)[0]);
@@ -171,7 +173,7 @@ int handleConnection(int fd) {
 			if (bytesReceived <= 0) {
 				throw std::runtime_error("Could not receive data from client");
 			}
-			receivedSoFar += bytesReceived;
+			receivedSoFar += (size_t)bytesReceived;
 
 			assert(receivedSoFar <= edgesBufferLen);
 		} while (receivedSoFar < edgesBufferLen);
@@ -186,27 +188,19 @@ int handleConnection(int fd) {
 			if (a >= n || b >= n || a == b || w > MAX_EDGE_WEIGHT) {
 				throw std::runtime_error("Invalid data");
 			}
-			adj[a][b] = w;
+			adj[a][b] = (int32_t)w;
 		}
 
 		std::vector<uint32_t> result;
-
-		std::cout << "Before yen yupee" << std::endl;
-		for (auto &row : adj) {
-			for (auto &e : row) {
-				std::cout << e << ' ';
-			}
-			std::cout << std::endl;
-		}
 
 		for (auto &row : yen(adj, s, t, k)) {
 			for (auto v : row) {
 				result.emplace_back(htonl(v));
 			}
 		}
-		std::cout << "After yen yupee" << std::endl;
 
-		result.insert(result.begin(), htonl(result.size() * sizeof(uint32_t)));
+		result.insert(result.begin(),
+					  htonl((uint32_t)result.size() * sizeof(uint32_t)));
 
 		uint8_t *resultBuffer = (uint8_t *)result.data();
 		size_t resultBufferLen = result.size() * sizeof(uint32_t);
@@ -288,7 +282,7 @@ int main(int argc, char *argv[]) {
 			std::cout << "Accepted connection from " << addrString << ':'
 					  << ntohs(clientAddr.sin_port) << '\n';
 
-			handleConnection(clientFd);
+			std::thread t(handleConnection, clientFd);
 		}
 
 	} catch (std::exception &e) {
